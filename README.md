@@ -17,9 +17,11 @@ Create an empty Freedom E SDK Software project for:
 * Example program: `empty`
 
 Copy the source files from this repository into the `src` folder and build.  
-Copy the generated `empty.hex` into the HiFive USB drive.
 
 ## Usage 
+Copy the generated `hex` file into the HiFive USB drive.  
+(Or, simply use the pre-built hex file `hifive1_revb_wifi.zip`).
+
 Connect to the UART used for the FE310-G002/HiFive1 console, using for example [Tera Term](https://ttssh2.osdn.jp/index.html.en).  
 The output should look like this (press the Reset button on the board if it does not work):
 ```
