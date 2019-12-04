@@ -41,4 +41,14 @@ Enter SSID:
 Enter Password:
 ```
 After the WiFi connection is made, press ENTER to disable it.  
-After that, you can enter any AT commands from [ESP32 AT Instruction Set and Examples](https://www.espressif.com/sites/default/files/documentation/esp32_at_instruction_set_and_examples_en.pdf)
+After that, you can enter any AT commands from [ESP32 AT Instruction Set and Examples](https://www.espressif.com/sites/default/files/documentation/esp32_at_instruction_set_and_examples_en.pdf).  
+For example, this will return the IP address:
+
+```
+ATE0
+AT+CWMODE=1
+AT+CWJAP="ssid","pwd"
+AT+CIFSR
+```
+
+

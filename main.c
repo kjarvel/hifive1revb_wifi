@@ -21,6 +21,7 @@ static const uint32_t interactive = 1; // Set to 0 to use hardcoded SSID and pwd
 static char wifi_ssid[STR_LEN] = "AndroidAPDE9B";
 static char wifi_pwd[STR_LEN] = "isll3425";
 static char at_cmd[STR_LEN * 2];
+static char recv_str[STR_LEN];
 
 int main(void)
 {
@@ -84,6 +85,7 @@ int main(void)
         printf("\r\n");
         snprintf(at_cmd, sizeof(at_cmd), "%s\r\n", wifi_ssid);
         spi_send(at_cmd);
+        spi_recv(recv_str, STR_LEN);
     }
 }
 

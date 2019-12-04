@@ -5,16 +5,13 @@ GPIO 5 = SPI SCK
 GPIO 9 = SPI CS2 (Chip select)
 GPIO 10 = WF INT (Handshake)
 
-Solder across SJ1 to connect GPIO_9 to SPI_CA2
-Solder across SJ2 to connect GPIO_10 to WF_RESET (should be WF_INT/Handshake)
-
 Each GPIO pin can implement up to 2 HW-Driven functions (IOF):
 
 GPIO    IOF0
 3       SPI1_DQ0 (MOSI)
 4       SPI1_DQ1 (MISO)
-5		SPI1_SCK (CLOCK)
-9		SPI1_CS2 (CHIP SELECT)
+5       SPI1_SCK (CLOCK)
+9       SPI1_CS2 (CHIP SELECT)
 
 - ESP32 is slave
 - Hifive1 FE310-G002 is master
@@ -69,16 +66,10 @@ https://www.espressif.com/sites/default/files/documentation/esp32_technical_refe
 #define IOF_SPI_ENABLE (BIT_MASK(SPI1_DQ0_MOSI) | BIT_MASK(SPI1_DQ1_MISO) | BIT_MASK(SPI1_SCK)| BIT_MASK(SPI1_CS2))
 
 static uint32_t handshake_ready(void);
-static void spi_rxdata_read(void);
+static uint8_t spi_rxdata_read(void);
 static void cs_deassert(void);
-static void spi_send_recv_header(void);
-static void spi_send_recv_length(uint8_t len);
-
-//----------------------------------------------------------------------
-static void cs_deassert(void)
-{
-    delay(SPI_DELAY_LONG);
-}
+static void spi_xfer_recv_header(void);
+static void spi_xfer_recv_length(uint8_t len);
 
 //----------------------------------------------------------------------
 void spi_init(uint32_t spi_clock)
@@ -115,29 +106,43 @@ void spi_init(uint32_t spi_clock)
 }
 
 //----------------------------------------------------------------------
-static void spi_rxdata_read(void)
+static void cs_deassert(void)
 {
+    delay(SPI_DELAY_LONG);          // Wait for CS to AUTO deassert
+}
+
+//----------------------------------------------------------------------
+// Reads one byte from the SPI RX register
+//----------------------------------------------------------------------
+static uint8_t spi_rxdata_read(void)
+{
+    uint32_t c;
     
-    delay(SPI_DELAY); // delay required
     while (1) {
-        if (SPI1_RXDATA > 0xFF) { // empty is set, return
-            return;
+        c = SPI1_RXDATA;    // Read the RX register EXACTLY once
+        if (c <= 0xFF) {    // empty bit was not set, return the data
+            return (uint8_t)c;
         }
     }
 }
 
+//----------------------------------------------------------------------
+// Returns 1 if handshake pin is high (ready)
 //----------------------------------------------------------------------
 static uint32_t handshake_ready(void)
 {
     return ((INPUT_VAL & BIT_MASK(HS_PIN)) != 0) ? 1: 0;
 }
 
+
 //----------------------------------------------------------------------
-static void spi_send_recv_header(void)
+// Transfer a header where "0x02" tells ESP32 to receive an AT command
+//----------------------------------------------------------------------
+static void spi_xfer_recv_header(void)
 {
     const uint8_t at_flag_buf[] = {0x02, 0x00, 0x00, 0x00};
 
-    printf(" | spi_send_recv_header: sending: %02x %02x %02x %02x\r\n",
+    printf(" | spi_xfer_recv_header: sending: %02x %02x %02x %02x\r\n",
            at_flag_buf[0], at_flag_buf[1], at_flag_buf[2], at_flag_buf[3]);
     
     for (uint32_t i = 0; i < 4; i++) {
@@ -153,7 +158,9 @@ static void spi_send_recv_header(void)
 }
 
 //----------------------------------------------------------------------
-static void spi_send_recv_length(uint8_t len)
+// Transfer the length of the AT command
+//----------------------------------------------------------------------
+static void spi_xfer_recv_length(uint8_t len)
 {
     uint8_t len_buf[] = {0x00, 0x00, 0x00, 'A'};
 
@@ -175,18 +182,20 @@ static void spi_send_recv_length(uint8_t len)
 }
 
 //----------------------------------------------------------------------
+// Send a string (AT command) on SPI to ESP32
+//----------------------------------------------------------------------
 void spi_send(const char *str_p)
 {
     uint32_t len;
 
     printf("[+] spi_send: %s", str_p);
     
-    // 1. Send the header where 0x02 tells ESP to receive a command
-    spi_send_recv_header();
+    // 1. Send the header where 0x02 tells ESP32 to receive a command
+    spi_xfer_recv_header();
 
     // 2. Send the length of data, len_buf[3] must be 'A'
     len = strlen(str_p);
-    spi_send_recv_length(len);
+    spi_xfer_recv_length(len);
 
     // 3. Send the actual data
     printf(" | spi_send data: sending:\r\n");
@@ -211,6 +220,72 @@ void spi_send(const char *str_p)
     printf("DONE\r\n");
 }
 
+
+//----------------------------------------------------------------------
+// Transfer a header where "0x01" tells ESP32 to send a response
+//----------------------------------------------------------------------
+static void spi_xfer_send_header(void)
+{
+    const uint8_t at_flag_buf[] = {0x01, 0x00, 0x00, 0x00};
+
+    printf("[+] spi_xfer_send_header: sending: %02x %02x %02x %02x\r\n", 
+           at_flag_buf[0], at_flag_buf[1], at_flag_buf[2], at_flag_buf[3]);
+    
+    for (uint32_t i = 0; i < 4; i++) {
+        while (SPI1_TXDATA > 0xFF) {} // full bit set, wait
+        SPI1_TXDATA = at_flag_buf[i];
+        spi_rxdata_read();
+    }
+    
+    cs_deassert();
+    printf(" | Waiting for handshake pin ready...");
+    while (!handshake_ready()) {}
+    printf("DONE\r\n");
+}
+
+//----------------------------------------------------------------------
+// Receive a response on SPI from the ESP32
+//----------------------------------------------------------------------
+void spi_recv(char *str_p, uint32_t len)
+{
+    uint8_t len_buf[] = {0x00, 0x00, 0x00, 0x00};
+    uint32_t data_len = 0;
+
+    do { 
+        
+        // 1. Send the header where 0x01 tells ESP to send a response
+        spi_xfer_send_header();
+
+        // 2. Get the length of data, len_buf[3] should be 'B'
+        for (uint32_t i = 0; i < 4; i++) {
+            while (SPI1_TXDATA > 0xFF) {} // full bit set, wait
+            SPI1_TXDATA = 0x00;
+            len_buf[i] = spi_rxdata_read();
+        }
+
+        data_len = len_buf[0];
+        cs_deassert();
+        printf(" | spi_recv length: %u, %c\r\n", data_len, len_buf[3]);
+        printf(" | Waiting for handshake pin ready...");
+        while (!handshake_ready()) {}
+        printf("DONE\r\n");
+       
+        // 3. Get the actual data
+        for (uint32_t i = 0; i < data_len && i < len; i++) {
+            while (SPI1_TXDATA > 0xFF) {} // full bit set, wait
+            SPI1_TXDATA = 0x00;
+            str_p[i] = spi_rxdata_read();
+        }
+        
+        if (data_len < len) {
+            str_p[data_len] = '\0';
+        }
+        
+        cs_deassert();
+        printf(" | -- ESP32 ----> %s", (data_len > 2) ? str_p : "\r\n");
+        // Read data until handshake is not ready anymre   
+    } while (handshake_ready()); 
+}
 
 /* ----------------------------------------------------------------------
  * From https://github.com/sifive/riscv-zephyr/blob/hifive1-revb/drivers/wifi/eswifi/eswifi_bus_spi.c
