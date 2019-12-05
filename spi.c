@@ -279,6 +279,14 @@ void spi_recv(char *str_p, uint32_t len)
         
         if (data_len < len) {
             str_p[data_len] = '\0';
+            if (data_len >= 4) {
+                for (uint32_t i = 0; i < (data_len - 2); i++) {
+                    // Replace leading \r and \n with space
+                    if (str_p[i] == '\r' || str_p[i] == '\n') {
+                        str_p[i] = ' ';
+                    }
+                }
+            }
         }
         
         cs_deassert();
