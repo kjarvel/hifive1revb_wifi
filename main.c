@@ -22,6 +22,7 @@ static char wifi_ssid[STR_LEN] = "AndroidAPDE9B";
 static char wifi_pwd[STR_LEN] = "isll3425";
 static char at_cmd[STR_LEN * 2];
 static char recv_str[STR_LEN];
+uint32_t transparent = 0;   // 0: Disabled, 1: Enabled, 2: Ending
 
 int main(void)
 {
@@ -79,13 +80,19 @@ int main(void)
 
     printf("* Optional: Enter AT commands (see \"ESP32 AT Instruction Set and Examples\")\r\n");
     while(1) {
-        printf("* Enter AT command: ");
+        if (transparent == 1) {
+            printf("* ----> ");
+        } else {
+            printf("* Enter AT command: ");
+        }
         fflush(stdout);
         while (NULL == tty_gets(wifi_ssid, STR_LEN)) {}
         printf("\r\n");
         snprintf(at_cmd, sizeof(at_cmd), "%s\r\n", wifi_ssid);
         spi_send(at_cmd);
-        spi_recv(recv_str, STR_LEN);
+        if (!transparent) {
+            spi_recv(recv_str, STR_LEN);
+        }
     }
 }
 

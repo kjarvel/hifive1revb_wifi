@@ -16,7 +16,7 @@ GPIO    IOF0
 - ESP32 is slave
 - Hifive1 FE310-G002 is master
 
-For receving part in ESP32, see:
+For receiving part in ESP32, see:
 https://github.com/espressif/esp-at/blob/release/v1.1.0.0/main/interface/hspi/at_hspi_task.c
 https://www.espressif.com/sites/default/files/documentation/esp32_technical_reference_manual_en.pdf
 ------------------------------------------------------------------------*/
@@ -65,16 +65,22 @@ https://www.espressif.com/sites/default/files/documentation/esp32_technical_refe
 
 #define IOF_SPI_ENABLE (BIT_MASK(SPI1_DQ0_MOSI) | BIT_MASK(SPI1_DQ1_MISO) | BIT_MASK(SPI1_SCK)| BIT_MASK(SPI1_CS2))
 
+#ifdef __ICCRISCV__
+#define fflush(a)
+#endif
+
 static uint32_t handshake_ready(void);
 static uint8_t spi_rxdata_read(void);
 static void cs_deassert(void);
 static void spi_xfer_recv_header(void);
 static void spi_xfer_recv_length(uint8_t len);
 
+extern uint32_t transparent;    // 0: Disabled, 1: Enabled, 2: Ending
+
 //----------------------------------------------------------------------
 void spi_init(uint32_t spi_clock)
 {
-    IOF_EN &= ~BIT_MASK(HS_PIN);    // Make sure Handhake pin is GPIO
+    IOF_EN &= ~BIT_MASK(HS_PIN);    // Make sure Handshake pin is GPIO
     INPUT_EN |= BIT_MASK(HS_PIN);   // Handshake pin is input on master
     
     SPI1_FCTRL = 0;                 // 1:SPI flash mode, 0:programmed I/O mode
@@ -153,6 +159,7 @@ static void spi_xfer_recv_header(void)
     
     cs_deassert();
     printf(" | Waiting for handshake pin ready...");
+    fflush(stdout);
     while (!handshake_ready()) {}
     printf("DONE\r\n");
 }
@@ -177,6 +184,7 @@ static void spi_xfer_recv_length(uint8_t len)
 
     cs_deassert();    
     printf(" | Waiting for handshake pin ready...");
+    fflush(stdout);
     while (!handshake_ready()) {}
     printf("DONE\r\n");
 }
@@ -187,14 +195,28 @@ static void spi_xfer_recv_length(uint8_t len)
 void spi_send(const char *str_p)
 {
     uint32_t len;
+    
+    len = strlen(str_p);
+
+    if (transparent == 2) {
+        transparent = 0;
+    }
 
     printf("[+] spi_send: %s", str_p);
     
+    if (strcmp(str_p, "AT+CIPSEND\r\n") == 0) {
+        printf(" | -- Transparent mode ENABLED. End with \"+++\"\r\n");
+        transparent = 1;
+    } else if (strcmp(str_p, "+++\r\n") == 0) {
+        printf(" | -- Transparent mode DISABLED --\r\n");
+        transparent = 2; // End transparent mode next transfer
+        len = 3; // CR+LF bytes must not be sent with +++
+    }
+
     // 1. Send the header where 0x02 tells ESP32 to receive a command
     spi_xfer_recv_header();
 
     // 2. Send the length of data, len_buf[3] must be 'A'
-    len = strlen(str_p);
     spi_xfer_recv_length(len);
 
     // 3. Send the actual data
@@ -215,9 +237,12 @@ void spi_send(const char *str_p)
 
     cs_deassert();
 
-    printf(" | Waiting for handshake pin ready...");
-    while (!handshake_ready()) {}
-    printf("DONE\r\n");
+    if (!transparent) {
+        printf(" | Waiting for handshake pin ready...");
+        fflush(stdout);
+        while (!handshake_ready()) {}
+        printf("DONE\r\n");
+    }
 }
 
 
@@ -239,6 +264,7 @@ static void spi_xfer_send_header(void)
     
     cs_deassert();
     printf(" | Waiting for handshake pin ready...");
+    fflush(stdout);
     while (!handshake_ready()) {}
     printf("DONE\r\n");
 }
@@ -267,6 +293,7 @@ void spi_recv(char *str_p, uint32_t len)
         cs_deassert();
         printf(" | spi_recv length: %u, %c\r\n", data_len, len_buf[3]);
         printf(" | Waiting for handshake pin ready...");
+        fflush(stdout);
         while (!handshake_ready()) {}
         printf("DONE\r\n");
        
@@ -291,7 +318,7 @@ void spi_recv(char *str_p, uint32_t len)
         
         cs_deassert();
         printf(" | -- ESP32 ----> %s", (data_len > 2) ? str_p : "\r\n");
-        // Read data until handshake is not ready anymre   
+        // Read data until handshake is not ready anymore
     } while (handshake_ready()); 
 }
 
