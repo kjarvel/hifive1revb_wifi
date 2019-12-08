@@ -9,7 +9,8 @@
 #define DELAY           20000000
 #define BAUDRATE_115200 115200
 #define SPICLOCK_80KHZ  80000
-#define STR_LEN         200
+#define STR_LEN         1024
+#define BUF_LEN         4096
 #ifdef __ICCRISCV__
 #define fflush(a)
 #endif
@@ -20,9 +21,8 @@ static void get_ssid_pwd(char *ssid, char *pwd, uint32_t size);
 static const uint32_t interactive = 1; // Set to 0 to use hardcoded SSID and pwd
 static char wifi_ssid[STR_LEN] = "AndroidAPDE9B";
 static char wifi_pwd[STR_LEN] = "isll3425";
-static char at_cmd[STR_LEN * 2];
-static char recv_str[STR_LEN];
-uint32_t transparent = 0;   // 0: Disabled, 1: Enabled, 2: Ending
+static char at_cmd[STR_LEN*2];
+static char recv_str[BUF_LEN];
 
 int main(void)
 {
@@ -73,25 +73,25 @@ int main(void)
 
     printf("Press ENTER to disconnect....");
     fflush(stdout);
-    while (NULL == tty_gets(wifi_ssid, STR_LEN)) {}
+    while (NULL == tty_gets(wifi_ssid, sizeof(wifi_ssid))) {}
     printf("\r\n");
     spi_send("AT+CWQAP\r\n");
     spi_send("AT+CWMODE=0\r\n");
 
     printf("* Optional: Enter AT commands (see \"ESP32 AT Instruction Set and Examples\")\r\n");
     while(1) {
-        if (transparent == 1) {
+        if (TRANS_ON == spi_transparent()) {
             printf("* ----> ");
         } else {
             printf("* Enter AT command: ");
         }
         fflush(stdout);
-        while (NULL == tty_gets(wifi_ssid, STR_LEN)) {}
+        while (NULL == tty_gets(wifi_ssid, sizeof(wifi_ssid))) {}
         printf("\r\n");
         snprintf(at_cmd, sizeof(at_cmd), "%s\r\n", wifi_ssid);
         spi_send(at_cmd);
-        if (!transparent) {
-            spi_recv(recv_str, STR_LEN);
+        if (TRANS_OFF == spi_transparent()) {
+            spi_recv(recv_str, sizeof(recv_str));
         }
     }
 }

@@ -73,9 +73,9 @@ static uint32_t handshake_ready(void);
 static uint8_t spi_rxdata_read(void);
 static void cs_deassert(void);
 static void spi_xfer_recv_header(void);
-static void spi_xfer_recv_length(uint8_t len);
+static void spi_xfer_recv_length(uint32_t len);
 
-extern uint32_t transparent;    // 0: Disabled, 1: Enabled, 2: Ending
+static trans_t transparent;    // 0: Disabled, 1: Enabled, 2: Ending
 
 //----------------------------------------------------------------------
 void spi_init(uint32_t spi_clock)
@@ -167,14 +167,16 @@ static void spi_xfer_recv_header(void)
 //----------------------------------------------------------------------
 // Transfer the length of the AT command
 //----------------------------------------------------------------------
-static void spi_xfer_recv_length(uint8_t len)
+static void spi_xfer_recv_length(uint32_t len)
 {
     uint8_t len_buf[] = {0x00, 0x00, 0x00, 'A'};
 
-    len_buf[0] = len;
+    // Slice length if larger than 127
+    len_buf[0] = len & 127;
+    len_buf[1] = len >> 7;
     
-    printf(" | spi_send length: sending: (%d) %02x %02x %02x %02x\r\n",
-           len_buf[0], len_buf[0], len_buf[1], len_buf[2], len_buf[3]);
+    printf(" | spi_send length: sending: (%u) %02x %02x %02x %02x\r\n",
+           (len_buf[1] << 7) + len_buf[0], len_buf[0], len_buf[1], len_buf[2], len_buf[3]);
 
     for (uint32_t i = 0; i < 4; i++) {
         while (SPI1_TXDATA > 0xFF) {} // full bit set, wait
@@ -198,18 +200,18 @@ void spi_send(const char *str_p)
     
     len = strlen(str_p);
 
-    if (transparent == 2) {
-        transparent = 0;
+    if (transparent == TRANS_ENDING) {
+        transparent = TRANS_OFF;
     }
 
     printf("[+] spi_send: %s", str_p);
     
     if (strcmp(str_p, "AT+CIPSEND\r\n") == 0) {
         printf(" | -- Transparent mode ENABLED. End with \"+++\"\r\n");
-        transparent = 1;
+        transparent = TRANS_ON;
     } else if (strcmp(str_p, "+++\r\n") == 0) {
         printf(" | -- Transparent mode DISABLED --\r\n");
-        transparent = 2; // End transparent mode next transfer
+        transparent = TRANS_ENDING; // End transparent mode next transfer
         len = 3; // CR+LF bytes must not be sent with +++
     }
 
@@ -237,7 +239,7 @@ void spi_send(const char *str_p)
 
     cs_deassert();
 
-    if (!transparent) {
+    if (transparent == TRANS_OFF) {
         printf(" | Waiting for handshake pin ready...");
         fflush(stdout);
         while (!handshake_ready()) {}
@@ -289,7 +291,7 @@ void spi_recv(char *str_p, uint32_t len)
             len_buf[i] = spi_rxdata_read();
         }
 
-        data_len = len_buf[0];
+        data_len = (len_buf[1] << 7) + len_buf[0];
         cs_deassert();
         printf(" | spi_recv length: %u, %c\r\n", data_len, len_buf[3]);
         printf(" | Waiting for handshake pin ready...");
@@ -308,7 +310,7 @@ void spi_recv(char *str_p, uint32_t len)
             str_p[data_len] = '\0';
             if (data_len >= 4) {
                 for (uint32_t i = 0; i < (data_len - 2); i++) {
-                    // Replace leading \r and \n with space
+                    // Replace leading CR and LF with space
                     if (str_p[i] == '\r' || str_p[i] == '\n') {
                         str_p[i] = ' ';
                     }
@@ -320,6 +322,14 @@ void spi_recv(char *str_p, uint32_t len)
         printf(" | -- ESP32 ----> %s", (data_len > 2) ? str_p : "\r\n");
         // Read data until handshake is not ready anymore
     } while (handshake_ready()); 
+}
+
+//----------------------------------------------------------------------
+// Returns 1 if transparent transmission is enabled. 0 if not.
+//----------------------------------------------------------------------
+trans_t spi_transparent(void)
+{
+    return transparent;
 }
 
 /* ----------------------------------------------------------------------
